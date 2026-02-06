@@ -79,4 +79,3 @@ if ticker_input:
     if refresh_interval > 0:
         time.sleep(refresh_interval)
         st.rerun()
-
