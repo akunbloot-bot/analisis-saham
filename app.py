@@ -1,128 +1,82 @@
 import streamlit as st
-import pandas as pd
-import plotly.express as px
-import numpy as np
-from datetime import datetime
-import yfinance as yf
-from data_handler import fetch_stock_data
-from stock_analyzer import analyze_stock, score_stock
-import plotly.graph_objects as go
+import time
+from data_source import get_stock_data
+from indicators import get_technical_indicators
+from scoring import calculate_scores
+from ai_analysis import get_ai_decision, get_ai_explanation, get_ai_conclusion
+from ui_components import display_fundamental_table, display_kpi_cards, display_score_gauge, display_recommendation, display_explanation_panel, display_conclusion
+from config import REFRESH_INTERVAL_OPTIONS, SCORING_THRESHOLDS
 
-st.set_page_config(
-    page_title="Analisis Saham Pribadi BEI", 
-    page_icon="📈",
-    layout="wide"
-)
+# Set page config for wide layout and title
+st.set_page_config(layout="wide", page_title="Analisis Saham IDX")
 
-st.title("📈 Analisis Saham Pribadi BEI")
-st.markdown("**Masukkan kode saham BEI** (contoh: BUMI, WEHA, BBRI, TLKM)")
+# Custom CSS for fintech-grade UI: card-based, modern typography, subtle shadows
+css = """
+<style>
+    .section { background-color: #f8f9fa; padding: 20px; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 20px; }
+    .kpi-card { background-color: white; padding: 10px; border-radius: 5px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+    .stMetric { font-family: 'Arial', sans-serif; }
+    .green { color: green; }
+    .yellow { color: orange; }
+    .red { color: red; }
+    .trend-arrow-up { color: green; font-size: 1.5em; }
+    .trend-arrow-down { color: red; font-size: 1.5em; }
+    .trend-arrow-side { color: gray; font-size: 1.5em; }
+</style>
+"""
+st.markdown(css, unsafe_allow_html=True)
 
-# Sidebar untuk konfigurasi
-st.sidebar.header("⚙️ Pengaturan")
-period = st.sidebar.selectbox("Periode Grafik", ["6mo", "1y", "2y", "5y"], index=1)
+# User input for ticker
+ticker_input = st.text_input("Masukkan kode saham (contoh: BUMI, BBRI, TLKM)", value="", key="ticker").upper()
+refresh_interval = st.selectbox("Interval auto-refresh (detik, 0 untuk mati)", REFRESH_INTERVAL_OPTIONS, index=0)
 
-# Input saham
-col1, col2 = st.columns([3, 1])
-with col1:
-    symbol = st.text_input("Kode Saham:", placeholder="BUMI").upper().strip()
-with col2:
-    analyze_btn = st.button("🔍 Analisis", type="primary", use_container_width=True)
+if ticker_input:
+    symbol = ticker_input + ".JK"
+    with st.spinner("Mengambil data saham..."):
+        data, history = get_stock_data(symbol)
+        if data and not history.empty:
+            indicators = get_technical_indicators(history)
+            fundamental_score, technical_score, risk_score, final_score, missing_penalty = calculate_scores(data, history, indicators)
+            decision, confidence, risk_level, horizon = get_ai_decision(final_score, fundamental_score, technical_score, risk_score)
+            explanation = get_ai_explanation(fundamental_score, technical_score, risk_score, data, indicators)
+            conclusion = get_ai_conclusion(data, indicators, decision, horizon)
 
-if analyze_btn and symbol:
-    with st.spinner(f"📊 Mengambil data {symbol}.JK..."):
-        data = fetch_stock_data(symbol, period)
-    
-    if data is None:
-        st.error("❌ Gagal mengambil data. Pastikan kode saham benar!")
-    else:
-        analysis = analyze_stock(data)
-        scoring = score_stock(analysis)
-        
-        # Header dengan nama saham
-        st.header(f"**{data['nama_saham']} ({symbol})**")
-        
-        # Row 1: Metrics Primer
-        col1, col2, col3, col4 = st.columns(4)
-        col1.metric("💰 Harga Terkini", f"Rp {analysis['harga_terkini']:,}", delta=None)
-        col2.metric("🏭 Market Cap", f"Rp {analysis['market_cap']:.1f}T")
-        col3.metric("📊 PER", f"{analysis['per']:.2f}x")
-        col4.metric("🔢 PBV", f"{analysis['pbv']:.2f}x")
-        
-        # Row 2: Metrics Sekunder
-        col1, col2, col3, col4 = st.columns(4)
-        col1.metric("📈 EPS", f"Rp {analysis['eps']:,.0f}")
-        col2.metric("💵 Laba Bersih", f"Rp {analysis['laba_bersih']:.1f}M")
-        col3.metric("📉 Tren Laba", f"{analysis['tren_laba']*100:+.1f}%")
-        col4.metric("🔄 Volume", f"{analysis['volume_rata']:,.0f}")
-        
-        # Kategori & Score (highlight)
-        col1, col2 = st.columns(2)
-        with col1:
-            st.markdown(f"### 🎯 **{scoring['kategori']}**")
-            st.metric("Total Score", f"{scoring['score']}/100", delta=None)
-        with col2:
-            st.markdown("### 💡 **Rekomendasi**")
-            st.success(scoring['rekomendasi'])
-        
-        # Tabel Data Lengkap
-        st.subheader("📋 Data Lengkap")
-        df_metrics = pd.DataFrame({
-            'Metrik': ['Harga Terkini', 'Market Cap', 'PER', 'PBV', 'EPS', 'Laba Bersih (TTM)', 
-                      'Tren Laba (QoQ)', 'Volume Rata-rata', 'ROE Estimasi'],
-            'Nilai': [
-                f"Rp {analysis['harga_terkini']:,.0f}",
-                f"Rp {analysis['market_cap']:.1f}T",
-                f"{analysis['per']:.2f}x",
-                f"{analysis['pbv']:.2f}x",
-                f"Rp {analysis['eps']:,.0f}",
-                f"Rp {analysis['laba_bersih']:.1f}M",
-                f"{analysis['tren_laba']*100:.1f}%",
-                f"{analysis['volume_rata']:,.0f} lembar",
-                f"{analysis['roe']:.1f}%"
-            ]
-        })
-        st.dataframe(df_metrics, use_container_width=True)
-        
-        # Grafik Harga & Volume
-        st.subheader("📈 Grafik Harga & Volume")
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(x=data['history'].index, y=data['history']['Close'], 
-                                name='Harga Close', line=dict(color='blue', width=2)))
-        fig.add_trace(go.Bar(x=data['history'].index, y=data['history']['Volume']/1e6, 
-                            name='Volume (jt)', yaxis='y2', opacity=0.6))
-        fig.update_layout(
-            title=f"Harga & Volume {data['nama_saham']}",
-            yaxis=dict(title="Harga (Rp)"),
-            yaxis2=dict(title="Volume (jt lembar)", overlaying='y', side='right'),
-            xaxis_title="Tanggal",
-            height=500
-        )
-        st.plotly_chart(fig, use_container_width=True)
-        
-        # Detail Scoring (Transparan)
-        st.subheader("⚖️ Detail Penilaian (Rule-based)")
-        rules_df = pd.DataFrame(list(scoring['rules'].items()), columns=['Faktor', 'Skor'])
-        st.dataframe(rules_df.style.highlight_max(axis=0, color='lightgreen'), 
-                    use_container_width=True)
-        st.info("**Rules mudah dimodifikasi di file `stock_analyzer.py`**")
-        
-        # Kesimpulan
-        st.markdown("---")
-        st.markdown("""
-        ## 💡 **Kesimpulan Investasi**
-        """)
-        if scoring['score'] >= 70:
-            st.success(f"✅ **{symbol} termasuk saham BAGUS!** Cocok untuk portofolio jangka {'panjang' if analysis['tren_laba'] > 0.1 else 'sedang'}.")
-        elif scoring['score'] >= 40:
-            st.warning(f"⚠️ **{symbol} SAHAM SEDANG.** Cocok untuk trading spekulatif.")
+            # Display header
+            st.header(f"Analisis Saham {ticker_input} ({symbol})")
+
+            # Fundamental section
+            st.subheader("Data Fundamental")
+            col1, col2 = st.columns(2)
+            with col1:
+                display_fundamental_table(data)
+            with col2:
+                display_kpi_cards(data, indicators)
+
+            # Technical section
+            st.subheader("Analisis Teknikal")
+            st.write(f"RSI (14): {indicators['rsi']:.2f}")
+            st.write(f"MA20: {indicators['ma20']:.2f}, MA50: {indicators['ma50']:.2f}, MA200: {indicators['ma200']:.2f}")
+            st.write(f"MACD: {indicators['macd']:.2f}, Signal: {indicators['signal']:.2f}")
+            st.write(f"Tren Volume: {indicators['volume_trend']}")
+            st.write(f"Arah Tren: {indicators['trend']}")
+
+            # AI Scoring section
+            st.subheader("Skor AI")
+            display_score_gauge(final_score, fundamental_score, technical_score, risk_score)
+
+            # AI Decision
+            display_recommendation(decision, confidence, risk_level, horizon)
+
+            # Explanation panel
+            display_explanation_panel(explanation)
+
+            # Conclusion
+            display_conclusion(conclusion)
         else:
-            st.error(f"❌ **{symbol} SAHAM BURUK.** Cari alternatif lain.")
-        
-        st.caption(f"Data diupdate: {datetime.now().strftime('%d/%m/%Y %H:%M WIB')} | Sumber: Yahoo Finance")
+            st.error("Data tidak tersedia untuk saham ini. Coba ticker lain.")
 
-elif symbol:
-    st.warning("Klik tombol **Analisis** untuk memulai!")
-
-st.markdown("---")
-st.markdown("**Disclaimer**: Analisis ini bersifat edukasi. Investasi saham berisiko tinggi. DYOR!")
+    # Auto-refresh logic (non-blocking for short intervals, but sleeps UI)
+    if refresh_interval > 0:
+        time.sleep(refresh_interval)
+        st.rerun()
 
